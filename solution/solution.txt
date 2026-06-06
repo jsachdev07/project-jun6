@@ -1,0 +1,302 @@
+Solution --> 
+
+pre-req --> source code 
+
+Tools --> 
+
+1. Git --> code is local on my laptop, I need to use some SCM 
+2. Github --> for making code centralized
+3. Maven --> Compile + Unit test + package 
+4. Jenkins --> Continous integration
+5. Docker --> creating app image (containarize the package), push image to dockerhub, deploy the image as a container 
+6. Kubernetes --> for container orchestrator 
+7. deploy prometheus and grafana --> monitoring 
+
+================================================================
+
+SCM --> 
+
+git init 
+git add .
+git commit -m "source-code"
+git remote add origin https://github.com/jsachdev07/project-jun6.git
+git remote -v 
+git push -u origin master
+================================================================
+
+Continous Integration --> 
+
+Jenkins 
+
+pre-req --> you need to create a vm with ubuntu os preferred (AWS/Azure/GCP....)
+
+Steps --> 
+
+1. Install jenkins 
+
+sudo apt update
+sudo apt install fontconfig openjdk-21-jre
+java -version
+
+apt install wget -y 
+
+sudo wget -O /etc/apt/keyrings/jenkins-keyring.asc  https://pkg.jenkins.io/debian-stable/jenkins.io-2026.key
+
+echo "deb [signed-by=/etc/apt/keyrings/jenkins-keyring.asc]"  https://pkg.jenkins.io/debian-stable binary/ | sudo tee   /etc/apt/sources.list.d/jenkins.list > /dev/null
+
+sudo apt update
+
+sudo apt install jenkins
+
+2. configure jenkins (serverip:8080)
+
+3. Install git and maven on jenkins server 
+
+git --> 
+
+apt update -y 
+apt install git -y 
+
+
+maven --> 
+
+apt install wget -y 
+wget https://archive.apache.org/dist/maven/maven-3/3.9.9/binaries/apache-maven-3.9.9-bin.tar.gz
+sudo mkdir -p /opt/maven
+sudo tar -xvzf apache-maven-3.9.9-bin.tar.gz -C /opt/maven/ --strip-components=1
+sudo ln -s /opt/maven/bin/mvn /usr/bin/mvn
+
+
+4. Execute CI pipeline by creating a Job named ci-job
+
+
+
+pipeline
+{
+	agent any
+	stages
+	{
+		stage('Checkout')
+		{
+			steps
+			{
+				git  'https://github.com/jsachdev07/project-jun6.git'
+			}
+		}
+		
+		stage('Compile')
+		{
+			steps
+			{
+				sh 'mvn compile'
+			}
+		}
+
+		stage('Test')
+		{
+			steps
+			{
+				sh 'mvn test'
+			}
+		}
+
+		stage('Build')
+		{
+			steps
+			{
+				sh 'mvn package'
+			}
+		}
+     }
+}
+
+
+output --> /var/lib/jenkins/workspaces/ci-job/(code is here)
+
+Artifact --> /var/lib/jenkins/workspaces/ci-job/target/ABCtechnologies-1.0.war 
+================================================================
+
+Image Building using Docker and testing app in docker container
+
+Steps --> 
+
+1. Install docker 
+	apt install docker.io -y 
+
+2. Jenkins user run pipeline and jenkins user should have permission to run docker commands 
+
+Any one method should be used 
+
+	- give Ownership to jenkins group on docker socket file --> chown root:jenkins /var/run/docker.sock
+	- add jenkins user in docker group --> usermod -a -G docker jenkins 
+	
+3. write dockerfile and push it on github
+
+dockerfile --> 
+
+FROM iamdevopstrainer/tomcat:base
+COPY abc_tech.war /usr/local/tomcat/webapps/
+CMD ["catalina.sh", "run"]
+
+4. the image created by executing dockerfile is present locally on the jenkins server I need to push it to dockerhub
+   docker push command will be executed as part of my pipeline but for docker push to be successful we need the credentials of dockerhub account to be saved on jenkins global credentials.
+
+you need to make sure your dockerhub username and password is stored in jenkins global credentials with the credential id as "dockerhub"
+
+
+5. how will you login in your pipeline workflow? 
+
+that's where you need to install a docker pipeline plugin in jenkins and restart jenkins 
+
+withDockerRegistry() --> method will be used to login on dockerhub and this method is provided by the docker pipeline plugin that we have to install as a pre-requisite.
+
+6. create a ci-cd job on jenkins and deploy app in a container 
+
+jobname --> ci-cd-job
+
+
+pipeline
+{
+	agent any
+	stages
+	{
+		stage('Checkout')
+		{
+			steps
+			{
+				git 'https://github.com/jsachdev07/project-jun6.git'
+			}
+		}
+		
+		stage('Compile')
+		{
+			steps
+			{
+				sh 'mvn compile'
+			}
+		}
+
+		stage('Test')
+		{
+			steps
+			{
+				sh 'mvn test'
+			}
+		}
+
+		stage('Build')
+		{
+			steps
+			{
+				sh 'mvn package'
+			}
+		}
+		
+        stage('Build Docker Image') {
+            steps {
+                sh '''
+                    cp target/ABCtechnologies-1.0.war abc_tech.war
+                    docker build -t abc_tech:$BUILD_NUMBER .
+                    docker tag abc_tech:$BUILD_NUMBER jsachdev07/abc_tech:$BUILD_NUMBER
+                '''
+            }
+        }
+
+        stage('Push Docker Image') {
+            steps {
+                withDockerRegistry([credentialsId: "dockerhub", url: ""]) {
+                    sh 'docker push jsachdev07/abc_tech:$BUILD_NUMBER'
+                }
+            }
+        }
+		
+		stage('Deploy as container')
+		{
+			steps
+			{
+				sh 'docker run -d -P jsachdev07/abc_tech:$BUILD_NUMBER'
+			}
+		}  
+		
+	}
+}
+
+
+Artifact --> /var/lib/jenkins/workspaces/ci-cd-job/target/ABCtechnologies-1.0.war 
+
+Build number 1 --> first execution
+Build number 2 --> second execution
+.
+.
+.
+.
+
+Buildnumber --> BUILD_NUMBER  (inbuilt variable in the jenkins job)
+
+
+Image name --> appname:tag  --> appname:version --> appname:$BUILD_NUMBER
+myapp:1
+myapp:2
+myapp:3
+myapp:4
+.
+.
+.
+.
+.
+
+
+7. verification --> 
+
+is the image created --> docker images 
+is the image uploaded --> go to dockerhub and check in your account if the image uploaded or not
+is the container created --> docker ps -a (keep a note of 5 digit port number that is assigned to container  32768, 32769, 32770.....)
+is the tomcat application running --> vmIP:32768 -- this will show tomcat landing page 
+is the abc technology java app running --> vmIP:32768/abc_tech  --> this should open application 
+
+================================================================
+
+Deployment to kubernetes --> 
+
+
+pre-req --> I need a k8s cluster (EKS/GKE/AKS/OKE/selfmanaged....)
+
+how will I create k8s cluster (manually) or using automation 
+
+manually --> eksctl command for AWS EKS cluster  or using gcloud cli for GKE clusters....
+
+>>>>>>>>> explore how we can levarge terraform to create a k8s cluster for us and that too part of our ci-cd workflow 
+
+
+
+1. k8s cluster will be prepared 
+2. kubeconfig file of the k8s cluster should be copied to jenkins server on path /var/lib/jenkins/
+3. kubectl should be installed on jenkins server (kubectl apply -f yaml file)
+4. write yaml file
+
+apiVersion: v1
+kind: Pod
+metadata: 
+  name: abcapp
+spec:
+  containers:
+  - name: abcapp-container
+    image: abc_tech:$BUILD_NUMBER
+	
+	
+
+		stage('Deploy to Kubernetes')
+		{
+			steps
+			{
+			    sh 'envsubst pod.yaml pod-new.yaml'
+				sh 'kubectl apply -f pod-new.yaml'
+			}
+		} 
+
+
+
+5. verify --> 
+
+k8s cluster run command kubectl get po and see if pod is running or not.
+
